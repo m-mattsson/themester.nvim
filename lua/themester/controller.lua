@@ -1,3 +1,6 @@
+local M = {}
+
+local themeList = {}
 local constants = require("themester.constants")
 local config = require("themester.config")
 local persistence = require("themester.persistence")
@@ -8,7 +11,16 @@ local position = 0
 local selectedThemeId = 0
 local resultsStart = constants.RESULTS_TOP_MARGIN
 
-local function loadActualThemeConfig()
+-- Add the missing load function
+function M.load(code)
+	local fn, err = load(code)
+	if err then
+		return nil, err
+	end
+	return fn, nil
+end
+
+function M.loadActualThemeConfig()
 	local themeList = config.getSettings().themes
 	selectedThemeId = vim.g.theme_id
 
@@ -26,12 +38,12 @@ local function loadActualThemeConfig()
 	end
 end
 
-local function setColorscheme(theme)
+function M.setColorscheme(theme)
 	local globalBefore = config.getSettings().globalBefore
 	local globalAfter = config.getSettings().globalAfter
 
 	if globalBefore then
-		local fn, err = load(globalBefore)
+		local fn, err = M.load(globalBefore)
 		if err then
 			print("Themester error: " .. err)
 			return false
@@ -42,7 +54,7 @@ local function setColorscheme(theme)
 	end
 
 	if theme.before then
-		local fn, err = load(theme.before)
+		local fn, err = M.load(theme.before)
 		if err then
 			print("Themester error: " .. err)
 			return false
@@ -58,12 +70,15 @@ local function setColorscheme(theme)
 	if not ok then
 		print(constants.MSG_ERROR.THEME_NOT_LOADED .. ": " .. theme.colorscheme)
 		-- Restore previus
-		vim.cmd("colorscheme " .. config.getSettings().themes[selectedThemeId])
+		local currentThemes = config.getSettings().themes
+		if selectedThemeId and currentThemes[selectedThemeId] then
+			vim.cmd("colorscheme " .. currentThemes[selectedThemeId].colorscheme)
+		end
 		return false
 	end
 
 	if globalAfter then
-		local fn, err = load(globalAfter)
+		local fn, err = M.load(globalAfter)
 		if err then
 			print("Themester error: " .. err)
 			return false
@@ -74,7 +89,7 @@ local function setColorscheme(theme)
 	end
 
 	if theme.after then
-		local fn, err = load(theme.after)
+		local fn, err = M.load(theme.after)
 		if err then
 			print(constants.MSG_ERROR.GENERIC .. ": " .. err)
 			return false
@@ -87,7 +102,7 @@ local function setColorscheme(theme)
 	return true
 end
 
-local function updateView(direction)
+function M.updateView(direction)
 	local themeList = config.getSettings().themes
 	position = position + direction
 	api.nvim_set_option_value("modifiable", true, {buf=window.getBuf()})
@@ -123,13 +138,13 @@ local function updateView(direction)
 	api.nvim_win_set_cursor(window.getWin(), { position, 0 })
 
 	if config.getSettings().livePreview then
-		setColorscheme(themeList[position - 1])
+		M.setColorscheme(themeList[position - 1])
 	end
 
 	api.nvim_set_option_value("modifiable", false, {buf=window.getBuf()})
 end
 
-local function revertTheme()
+function M.revertTheme()
 	local colorschemeToSet
 
 	-- If there is no previous theme to revert to, use the default.
@@ -138,37 +153,37 @@ local function revertTheme()
 	else
 		colorschemeToSet = { colorscheme = "default" }
 	end
-	setColorscheme(colorschemeToSet)
+	M.setColorscheme(colorschemeToSet)
 end
 
-local function open()
-	loadActualThemeConfig()
+function M.open()
+	M.loadActualThemeConfig()
 	window.openWindow()
-	updateView(0)
+	M.updateView(0)
 end
 
-local function close()
+function M.close()
 	window.closeWindow()
 end
 
-local function setPosition (value)
+function M.setPosition (value)
   position = value
 end
 
-local function closeAndRevert()
-	revertTheme()
+function M.closeAndRevert()
+	M.revertTheme()
 	window.closeWindow()
 end
 
-local function save()
+function M.save()
 	local theme = config.getSettings().themes[position - 1]
 	persistence.saveTheme(theme, position - 1)
 	selectedThemeId = position - 1
 	vim.g.theme_id = selectedThemeId
 end
 
-local function closeAndSave()
-	save()
+function M.closeAndSave()
+	M.save()
 	window.closeWindow()
 end
 
@@ -182,16 +197,16 @@ end
 -- 	 setThemeByName("monokai") -- Applies the monokai theme
 --
 -- @error Prints an error message if the theme is not found.
-local function setThemeByName(name, makePersistent)
+function M.setThemeByName(name, makePersistent)
 	makePersistent = makePersistent or false
 	local themes = config.getSettings().themes
 	for index, theme in ipairs(themes) do
 		if theme.name == name or theme.colorscheme == name then
 			position = index + 1
 			selectedThemeId = index + 1
-			setColorscheme(themes[index])
+			M.setColorscheme(themes[index])
 			if makePersistent then
-				save()
+				M.save()
 			end
 			return
 		end
@@ -211,7 +226,7 @@ end
 --   setThemeByIndex(2)  -- Applies the theme at index 2
 --
 -- @error Prints an error message if the index is invalid.
-local function setThemeByIndex(index, makePersistent)
+function M.setThemeByIndex(index, makePersistent)
 	makePersistent = makePersistent or false
 	local themes = config.getSettings().themes
 	if index < 1 or index > #themes then
@@ -220,17 +235,17 @@ local function setThemeByIndex(index, makePersistent)
 	end
 	position = index + 1
 	selectedThemeId = index
-	setColorscheme(themes[index])
+	M.setColorscheme(themes[index])
 	if makePersistent then
-		save()
+		M.save()
 	end
 end
 
 --- Retrieves the current theme..
 --
 -- @return table|nil A table containing the name and index of the current theme if it exists, or nil if not.
-local function getCurrentTheme()
-	loadActualThemeConfig()
+function M.getCurrentTheme()
+	M.loadActualThemeConfig()
 	local themes = config.getSettings().themes
 	if themes[selectedThemeId] then
 		return {
@@ -245,28 +260,14 @@ end
 --- Retrieves the available themes.
 --
 -- @return table A table containing the available themes.
-local function getAvailableThemes()
-	loadActualThemeConfig()
+function M.getAvailableThemes()
+	M.loadActualThemeConfig()
 	return config.getSettings().themes
 end
 
-local function bootstrap()
-	loadActualThemeConfig()
+function M.bootstrap()
+	M.loadActualThemeConfig()
 	persistence.loadState() 
 end
 
-return {
-	open = open,
-	close = close,
-  setPosition = setPosition,
-	closeAndRevert = closeAndRevert,
-	closeAndSave = closeAndSave,
-	updateView = updateView,
-	loadActualThemeConfig = loadActualThemeConfig,
-	setColorscheme = setColorscheme,
-	bootstrap = bootstrap,
-	setThemeByName = setThemeByName,
-	setThemeByIndex = setThemeByIndex,
-	getCurrentTheme = getCurrentTheme,
-	getAvailableThemes = getAvailableThemes
-}
+return M

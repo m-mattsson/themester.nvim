@@ -1,81 +1,177 @@
--- The issue is that the controller has a local variable 'themeList' that needs to be set
--- You need to modify your lua/themester/controller.lua file
-
--- Look for line 101 in controller.lua - it probably looks something like:
--- local themeList = ...
--- for i = 1, #themeList do  -- <-- This is line 101 causing the error
-
--- Here are the fixes to add to your controller.lua:
-
--- Option 1: Add this at the top of controller.lua (after any existing local variables)
 local M = {}
-local themeList = {} -- Initialize themeList
 
--- Option 2: Add a function to set themeList
-function M.setThemeList(themes)
-    themeList = themes or {}
+-- Load modules
+local auto_discover = require("themester.auto_discover")
+local plugin_loader = require("themester.plugin_loader")
+local controller = require("themester.controller")
+local config = require("themester.config")  -- Need this for controller
+
+-- Default configuration
+local default_config = {
+    themes = {},
+    auto_discover = {
+        enabled = false,
+        theme_dir = "themes",
+        dynamic_loading = true,
+        wait_for_plugins = true,
+    },
+    livePreview = true,
+    globalBefore = "",  -- Required by controller
+    globalAfter = "",   -- Required by controller
+}
+
+-- Store config globally
+local themester_config = {}
+
+-- Merge user config with defaults
+local function merge_config(user_config)
+    local config = vim.tbl_deep_extend("force", default_config, user_config or {})
+    return config
 end
 
--- Option 3: Modify the updateView function to use M.themes instead of themeList
--- Find the updateView function and change lines like:
--- for i = 1, #themeList do
--- to:
--- for i = 1, #(M.themes or {}) do
-
--- Option 4: Complete controller initialization function
-function M.initialize(config)
-    if config and config.themes then
-        themeList = config.themes
-        M.themes = config.themes
-        M.config = config
-    end
-end
-
--- Make sure at the end of controller.lua you have:
-return M
-
----
-
--- Meanwhile, update your init.lua to call the new initialize function:
--- Add this to your initialize_controller function in init.lua:
-
-local function initialize_controller(config)
-    print("Initializing controller with", #config.themes, "themes")
+-- Initialize controller with proper config setup
+local function initialize_controller(final_config)
+    print("Initializing controller with", #final_config.themes, "themes")
     
     -- Debug: print themes being passed
-    for i, theme in ipairs(config.themes) do
+    for i, theme in ipairs(final_config.themes) do
         print(string.format("Theme %d: %s -> %s", i, theme.name, theme.colorscheme))
     end
     
-    -- NEW: Call initialize function if it exists
-    if controller.initialize then
-        controller.initialize(config)
-        print("Called controller.initialize")
+    -- IMPORTANT: The controller expects config to be set via config.setup()
+    -- This is how the original themery works
+    local controller_config = config.setup(final_config)
+    
+    print("Controller config setup completed")
+    print("Config themes count:", #controller_config.themes)
+    
+    -- Now bootstrap the controller (this loads the actual theme config)
+    if controller.bootstrap then
+        controller.bootstrap()
+        print("Controller bootstrap completed")
     end
     
-    -- NEW: Call setThemeList function if it exists
-    if controller.setThemeList then
-        controller.setThemeList(config.themes)
-        print("Called controller.setThemeList")
+    -- Verify themes are available
+    local available_themes = controller.getAvailableThemes()
+    print("Available themes after setup:", #available_themes)
+    
+    for i, theme in ipairs(available_themes) do
+        print(string.format("  Available theme %d: %s", i, theme.name))
     end
-    
-    -- Try other methods
-    if controller.setThemes then
-        controller.setThemes(config.themes)
-    end
-    
-    -- Set properties
-    controller.themes = config.themes
-    controller.config = config
-    
-    -- Try initialization functions
-    if controller.init then
-        controller.init(config)
-    elseif controller.bootstrap then
-        controller.bootstrap(config)
-    elseif controller.setup then
-        controller.setup(config)
-    end
-    
-    print("Controller initialization completed")
 end
+
+-- Setup function with dynamic loading
+function M.setup(user_config)
+    local final_config = merge_config(user_config)
+    
+    print("Setup called with config")
+    
+    -- If auto-discovery is enabled, handle dynamic loading
+    if final_config.auto_discover.enabled then
+        local theme_dir = vim.fn.stdpath("config") .. "/lua/" .. final_config.auto_discover.theme_dir
+        
+        if final_config.auto_discover.dynamic_loading then
+            vim.notify("Themester: Discovering and loading theme plugins...", vim.log.levels.INFO)
+            
+            local loaded_plugins, failed_plugins = plugin_loader.load_theme_dependencies(theme_dir)
+            
+            if #loaded_plugins > 0 then
+                vim.notify(string.format("Themester: Loaded %d theme plugins", #loaded_plugins), vim.log.levels.INFO)
+            end
+            
+            if #failed_plugins > 0 then
+                vim.notify(string.format("Themester: Failed to load %d plugins: %s", 
+                    #failed_plugins, table.concat(failed_plugins, ", ")), vim.log.levels.WARN)
+            end
+            
+            if final_config.auto_discover.wait_for_plugins then
+                plugin_loader.wait_for_plugins(5000)
+            end
+        end
+        
+        -- Discover themes
+        local discovered_themes = auto_discover.discover_themes(final_config.auto_discover)
+        
+        if #discovered_themes > 0 then
+            for _, theme in ipairs(discovered_themes) do
+                table.insert(final_config.themes, theme)
+            end
+            
+            -- Remove duplicates
+            local seen = {}
+            local unique_themes = {}
+            for _, theme in ipairs(final_config.themes) do
+                if not seen[theme.colorscheme] then
+                    seen[theme.colorscheme] = true
+                    table.insert(unique_themes, theme)
+                end
+            end
+            final_config.themes = unique_themes
+            
+            -- Sort themes
+            table.sort(final_config.themes, function(a, b)
+                return a.name < b.name
+            end)
+            
+            vim.notify(string.format("Themester: Auto-discovered %d themes", #discovered_themes), vim.log.levels.INFO)
+        end
+    end
+    
+    -- Ensure we have at least one theme
+    if #final_config.themes == 0 then
+        final_config.themes = {{ name = "Default", colorscheme = "default" }}
+    end
+    
+    -- Store config globally
+    themester_config = final_config
+    
+    -- Initialize controller with proper config
+    initialize_controller(final_config)
+    
+    print("Setup completed with", #final_config.themes, "themes")
+end
+
+-- Function to get current config
+function M.get_config()
+    return themester_config
+end
+
+-- Function to get themes (for controller to call)
+function M.get_themes()
+    return themester_config.themes or {}
+end
+
+-- Expose the main themester function
+function M.themester()
+    if not controller then
+        vim.notify("Themester controller not available", vim.log.levels.ERROR)
+        return
+    end
+    
+    -- Make sure controller is properly initialized
+    local available_themes = controller.getAvailableThemes()
+    if not available_themes or #available_themes == 0 then
+        print("No themes available, re-initializing...")
+        initialize_controller(themester_config)
+    end
+    
+    -- Debug before opening
+    print("Opening themester...")
+    
+    if controller.open then
+        controller.open()
+    else
+        vim.notify("Controller open function not available", vim.log.levels.ERROR)
+    end
+end
+
+-- Create commands
+vim.api.nvim_create_user_command("Themester", function()
+    M.themester()
+end, {})
+
+vim.api.nvim_create_user_command("Themery", function()
+    M.themester()
+end, {})
+
+return M
