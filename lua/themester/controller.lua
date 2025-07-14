@@ -103,45 +103,50 @@ function M.setColorscheme(theme)
 end
 
 function M.updateView(direction)
-	local themeList = config.getSettings().themes
-	position = position + direction
-	api.nvim_set_option_value("modifiable", true, {buf=window.getBuf()})
+    local themeList = config.getSettings().themes
+    position = position + direction
+    api.nvim_set_option_value("modifiable", true, {buf=window.getBuf()})
 
-	-- cycle to the last result if cursor is at the top of the results list and moved up
-	if position < resultsStart then
-		position = #themeList + resultsStart - 1
-	end
+    -- cycle to the last result if cursor is at the top of the results list and moved up
+    if position < resultsStart then
+        position = #themeList + resultsStart - 1
+    end
 
-	-- cycle to the first result if cursor is at the bottom of the results list and moved down
-	if position > #themeList + 1 then
-		position = resultsStart
-	end
+    -- cycle to the first result if cursor is at the bottom of the results list and moved down
+    if position > #themeList + resultsStart - 1 then
+        position = resultsStart
+    end
 
-	if #themeList == 0 then
-		window.printNoThemesLoaded()
-		api.nvim_set_option_value("modifiable", false, {buf=window.getBuf()})
-		return
-	end
+    if #themeList == 0 then
+        window.printNoThemesLoaded()
+        api.nvim_set_option_value("modifiable", false, {buf=window.getBuf()})
+        return
+    end
 
-	local resultToPrint = {}
-	for i in ipairs(themeList) do
-		local prefix = "  "
+    local resultToPrint = {}
+    for i in ipairs(themeList) do
+        local prefix = "  "
 
-		if selectedThemeId == i then
-			prefix = "> "
-		end
+        if selectedThemeId == i then
+            prefix = "> "
+        end
 
-		resultToPrint[i] = prefix .. themeList[i].name
-	end
+        resultToPrint[i] = prefix .. themeList[i].name
+    end
 
-	api.nvim_buf_set_lines(window.getBuf(), 1, -1, false, resultToPrint)
-	api.nvim_win_set_cursor(window.getWin(), { position, 0 })
+    api.nvim_buf_set_lines(window.getBuf(), 1, -1, false, resultToPrint)
+    api.nvim_win_set_cursor(window.getWin(), { position, 0 })
 
-	if config.getSettings().livePreview then
-		M.setColorscheme(themeList[position - 1])
-	end
+    -- Live preview - apply theme as you navigate
+    if config.getSettings().livePreview then
+        local themeIndex = position - resultsStart + 1  -- Calculate correct index
+        if themeList[themeIndex] then
+            print("Applying theme:", themeList[themeIndex].name)
+            M.setColorscheme(themeList[themeIndex])
+        end
+    end
 
-	api.nvim_set_option_value("modifiable", false, {buf=window.getBuf()})
+    api.nvim_set_option_value("modifiable", false, {buf=window.getBuf()})
 end
 
 function M.revertTheme()
@@ -159,6 +164,7 @@ end
 function M.open()
 	M.loadActualThemeConfig()
 	window.openWindow()
+    M.setupKeyMappings()
 	M.updateView(0)
 end
 
@@ -255,6 +261,33 @@ function M.getCurrentTheme()
 	else
 		return nil
 	end
+end
+
+-- Setup key mappings for the themester window
+function M.setupKeyMappings()
+    local buf = window.getBuf()
+    local opts = { buffer = buf, noremap = true, silent = true }
+    
+    -- Navigation keys (j/k and arrow keys)
+    vim.keymap.set('n', 'j', function() M.updateView(1) end, opts)
+    vim.keymap.set('n', '<Down>', function() M.updateView(1) end, opts)
+    vim.keymap.set('n', 'k', function() M.updateView(-1) end, opts)
+    vim.keymap.set('n', '<Up>', function() M.updateView(-1) end, opts)
+    
+    -- Selection keys (Enter and Space to select theme)
+    vim.keymap.set('n', '<CR>', function() M.closeAndSave() end, opts)
+    vim.keymap.set('n', '<Space>', function() M.closeAndSave() end, opts)
+    
+    -- Cancel/close keys (q and Esc to cancel and revert)
+    vim.keymap.set('n', 'q', function() M.closeAndRevert() end, opts)
+    vim.keymap.set('n', '<Esc>', function() M.closeAndRevert() end, opts)
+    
+    -- Help key
+    vim.keymap.set('n', '?', function()
+        print("Themester: ↑↓/jk=navigate, Enter/Space=select, q/Esc=cancel")
+    end, opts)
+    
+    print("Themester keymaps set up")
 end
 
 --- Retrieves the available themes.
