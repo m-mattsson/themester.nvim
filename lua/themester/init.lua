@@ -1,21 +1,24 @@
-local controller = require("themester.controller")
+local M = {}
+
+-- Load modules
 local auto_discover = require("themester.auto_discover")
 local plugin_loader = require("themester.plugin_loader")
-
-local M = {}
+local controller = require("themester.controller")
 
 -- Default configuration
 local default_config = {
     themes = {},
     auto_discover = {
         enabled = false,
-        theme_dir = "themes", -- relative to lua/ directory
-        dynamic_loading = true, -- Enable dynamic plugin loading
-        wait_for_plugins = true, -- Wait for plugins to load before setup
+        theme_dir = "themes",
+        dynamic_loading = true,
+        wait_for_plugins = true,
     },
     livePreview = true,
-    themeConfigFile = vim.fn.stdpath("config") .. "/lua/themester/themes.lua",
 }
+
+-- Store config globally for controller access
+local themester_config = {}
 
 -- Merge user config with defaults
 local function merge_config(user_config)
@@ -26,6 +29,8 @@ end
 -- Setup function with dynamic loading
 function M.setup(user_config)
     local config = merge_config(user_config)
+    
+    print("Setup called with config:", vim.inspect(config))
     
     -- If auto-discovery is enabled, handle dynamic loading
     if config.auto_discover.enabled then
@@ -82,17 +87,45 @@ function M.setup(user_config)
         end
     end
     
-    -- Setup controller
-    controller.setup(config)
+    -- Store config globally for controller to access
+    themester_config = config
+    
+    -- Initialize controller manually since it doesn't have setup
+    if controller then
+        -- Set the themes directly on controller if it has a themes property
+        controller.themes = config.themes
+        controller.config = config
+        
+        -- Call bootstrap if it exists
+        if controller.bootstrap then
+            controller.bootstrap(config)
+        end
+        
+        print("Controller initialized with", #config.themes, "themes")
+    end
 end
 
--- Expose the main Themester function
+-- Function to get current config (for controller to access)
+function M.get_config()
+    return themester_config
+end
+
+-- Expose the main themester function
 function M.themester()
-    controller.open()
+    if controller and controller.open then
+        controller.open()
+    else
+        vim.notify("Themester controller not available", vim.log.levels.ERROR)
+    end
 end
 
 -- Create the :Themester command
 vim.api.nvim_create_user_command("Themester", function()
+    M.themester()
+end, {})
+
+-- Also create :Themery for backward compatibility
+vim.api.nvim_create_user_command("Themery", function()
     M.themester()
 end, {})
 
